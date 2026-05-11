@@ -212,9 +212,21 @@ export const createClaudeCodeRunner = (opts: ClaudeCodeRunnerOptions): AgentRunn
     // (no attachments to write), so we ensure it exists here.
     await mkdir(req.cwd, { recursive: true });
 
+    // Yield ONLY the latest user turn into the SDK prompt iterator. Each
+    // /v1/chat/completions HTTP request is a stateless single-turn run, so
+    // replaying every historical user message would make the SDK regenerate
+    // the assistant response for each prior turn; the openAiChatSseAdapter
+    // would then emit every replayed turn as deltas, and any OpenAI-shaped
+    // client (including the chat-ui SPA) would concatenate them into the
+    // single in-progress assistant bubble — producing the "every reply
+    // reprints the whole transcript" UI bug. Cross-turn state lives in the
+    // per-chat workspace (cwd), not in SDK session memory.
     const userMessages = req.cleanedMessages.filter((m) => m.role === "user");
+    const latestUserMessage = userMessages[userMessages.length - 1];
     async function* prompt() {
-      for (const m of userMessages) yield toSdkUserMessage(m, sessionId);
+      if (latestUserMessage !== undefined) {
+        yield toSdkUserMessage(latestUserMessage, sessionId);
+      }
     }
 
     // Spread process.env first so the SDK inherits PATH, HOME, etc. — the
