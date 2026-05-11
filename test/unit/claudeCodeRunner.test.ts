@@ -92,4 +92,53 @@ describe("claudeCodeRunner", () => {
       })) { /* drain */ }
     })()).rejects.toBeInstanceOf(AgentTimeoutError);
   });
+
+  it("yields ONLY the latest user message into the SDK prompt iterator", async () => {
+    // Regression: when the SPA replays the full conversation history on each
+    // turn, the runner used to forward every historical user message as a
+    // separate SDK prompt, causing the SDK to regenerate assistant responses
+    // for every prior turn. Those replayed responses then streamed back to
+    // the SPA and accumulated into the single in-progress assistant bubble.
+    //
+    // The correct behaviour is to yield only the most recent user turn —
+    // each HTTP request is a stateless single-turn run.
+    const yieldedUserMessages: unknown[] = [];
+    (sdkQuery as unknown as { mockReset: () => void }).mockReset();
+    (sdkQuery as unknown as {
+      mockImplementation: (fn: (args: { prompt: AsyncIterable<unknown> }) => unknown) => void;
+    }).mockImplementation((args) => (async function*() {
+      for await (const m of args.prompt) yieldedUserMessages.push(m);
+      yield { type: "result", result: "ok" };
+    })());
+
+    const runner = createClaudeCodeRunner({
+      provider: FOUNDRY_PROVIDER, maxTurns: 5, timeoutMs: 5000,
+    });
+    for await (const _ of runner.run({
+      chatId: "convo-1", model: "claude-opus-4-7", cwd: "/tmp/convo-1",
+      cleanedMessages: [
+        { role: "user", content: [{ type: "text", text: "first turn" }] },
+        { role: "assistant", content: [{ type: "text", text: "first reply" }] },
+        { role: "user", content: [{ type: "text", text: "second turn" }] },
+        { role: "assistant", content: [{ type: "text", text: "second reply" }] },
+        { role: "user", content: [{ type: "text", text: "third turn (latest)" }] },
+      ],
+      manifest: [],
+    })) { /* drain */ }
+
+    expect(yieldedUserMessages).toHaveLength(1);
+    const yielded = yieldedUserMessages[0] as {
+      type: string;
+      message: { role: string; content: Array<{ type: string; text?: string }> };
+    };
+    expect(yielded.type).toBe("user");
+    expect(yielded.message.role).toBe("user");
+    // The text block must be the LATEST user turn — never an earlier one.
+    const textBlocks = yielded.message.content.filter((b) => b.type === "text");
+    expect(textBlocks).toHaveLength(1);
+    expect(textBlocks[0]!.text).toBe("third turn (latest)");
+    // None of the prior user turn texts may leak through.
+    expect(textBlocks[0]!.text).not.toContain("first turn");
+    expect(textBlocks[0]!.text).not.toContain("second turn");
+  });
 });

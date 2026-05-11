@@ -464,6 +464,56 @@ describe("state / sendMessage", () => {
     expect(sseClientMock.streamChat).not.toHaveBeenCalled();
     expect(messages.value).toHaveLength(0);
   });
+
+  it("renders two consecutive assistant turns as two distinct, non-overlapping messages", async () => {
+    // Regression for the "every assistant turn reprints the whole transcript"
+    // bug. Each call to sendMessage must produce its own assistant Message
+    // with its own content signal — the second bubble must NOT carry any of
+    // the first bubble's tokens, even though the underlying signal layer
+    // streams deltas live.
+    vi.mocked(sseClientMock.streamChat).mockImplementationOnce(
+      async (_body, cbs: StreamChatCallbacks) => {
+        cbs.onDelta("First ");
+        cbs.onDelta("answer.");
+        cbs.onDone();
+      },
+    );
+
+    await sendMessage("First question");
+
+    // After turn 1: [user, assistant]
+    expect(messages.value).toHaveLength(2);
+    const firstAssistant = messages.value[1]!;
+    expect(firstAssistant.role).toBe("assistant");
+    expect(firstAssistant.content.value).toBe("First answer.");
+
+    vi.mocked(sseClientMock.streamChat).mockImplementationOnce(
+      async (_body, cbs: StreamChatCallbacks) => {
+        cbs.onDelta("Second ");
+        cbs.onDelta("answer.");
+        cbs.onDone();
+      },
+    );
+
+    await sendMessage("Second question");
+
+    // After turn 2: [user1, assistant1, user2, assistant2] — append-only.
+    expect(messages.value).toHaveLength(4);
+    const secondAssistant = messages.value[3]!;
+    expect(secondAssistant.role).toBe("assistant");
+    // The second bubble carries ONLY its own tokens.
+    expect(secondAssistant.content.value).toBe("Second answer.");
+
+    // Critically: the two assistant bubbles must be distinct objects with
+    // distinct ids and distinct content signals — no shared accumulator.
+    expect(secondAssistant.id).not.toBe(firstAssistant.id);
+    expect(secondAssistant.content).not.toBe(firstAssistant.content);
+    // The first bubble must NOT have absorbed the second turn's tokens.
+    expect(firstAssistant.content.value).toBe("First answer.");
+    expect(firstAssistant.content.value).not.toContain("Second");
+    // And the second bubble must NOT contain any of the first turn's text.
+    expect(secondAssistant.content.value).not.toContain("First");
+  });
 });
 
 describe("state / createProfile (CRUD wrapper)", () => {
