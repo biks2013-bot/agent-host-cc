@@ -3,6 +3,7 @@ import { buildApp } from "./httpServer.js";
 import { createWorkspaceManager } from "./workspaceManager.js";
 import { createAttachmentProcessor } from "./attachmentProcessor.js";
 import { createClaudeCodeRunner } from "./claudeCodeRunner.js";
+import { printStartupBanner } from "./startupBanner.js";
 
 const main = async () => {
   const cfg = loadConfig();
@@ -69,7 +70,17 @@ const main = async () => {
     responsesToolUseRendering: cfg.responsesToolUseRendering,
   });
 
-  await app.listen({ host: "0.0.0.0", port: cfg.listenPort });
+  const listenHost = "0.0.0.0";
+  await app.listen({ host: listenHost, port: cfg.listenPort });
+  // One-shot human-readable banner — bound URL + every env var the service
+  // reads, with secrets masked (AGENT_HOST_API_KEY intentionally revealed so
+  // the operator can grab it from the log to authenticate the first request).
+  printStartupBanner({
+    listenHost,
+    listenPort: cfg.listenPort,
+    modelIds: cfg.modelIds,
+    providerKind: cfg.provider.kind,
+  });
   app.log.info(`agent-host listening on :${cfg.listenPort} models=${cfg.modelIds.join(",")}`);
 };
 

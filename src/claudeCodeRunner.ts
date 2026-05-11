@@ -35,6 +35,14 @@ const resolveClaudeExecutable = (): string | undefined => {
 
 const CLAUDE_EXECUTABLE_PATH = resolveClaudeExecutable();
 
+// Settings layers the Claude Agent SDK is told to load. "user" enables
+// ~/.claude/settings.json + ~/.claude/plugins/** (so plugin-provided skills,
+// agents, and commands are discovered when the host's ~/.claude is bind-mounted
+// into the container). "project" enables <cwd>/.claude/**. "local" enables
+// <cwd>/.claude/settings.local.json. The /skills debug endpoint echoes the
+// same constant so introspection matches actual SDK behaviour.
+export const CLAUDE_SETTING_SOURCES = ["user", "project", "local"] as const;
+
 // ---------------------------------------------------------------------------
 // preview(): UTF-8-safe truncation + secret scrub helper.
 //
@@ -244,7 +252,7 @@ export const createClaudeCodeRunner = (opts: ClaudeCodeRunnerOptions): AgentRunn
         abortController: ctrl,
         tools: { type: "preset", preset: "claude_code" },
         systemPrompt: { type: "preset", preset: "claude_code" },
-        settingSources: ["project"],
+        settingSources: CLAUDE_SETTING_SOURCES,
         // Bypass interactive permission prompts. The agent runs as a non-root
         // user inside an isolated container with only /workspace writable,
         // and there is no UI on this path to answer permission questions.

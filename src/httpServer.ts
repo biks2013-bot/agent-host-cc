@@ -14,6 +14,9 @@ import {
 } from "./openAiResponseAdapter.js";
 import { createReadStream, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
+import { homedir } from "node:os";
+import { introspectClaudeMount } from "./skillsIntrospector.js";
+import { CLAUDE_SETTING_SOURCES } from "./claudeCodeRunner.js";
 
 export interface HttpServerOptions {
   apiKey: string;
@@ -85,6 +88,23 @@ export const buildApp = (opts: HttpServerOptions) => {
   });
 
   app.get("/healthz", async () => ({ ok: true }));
+
+  // Debug endpoint: walks the filesystem inside the running container to show
+  // what the Claude Agent SDK *would* discover given the configured
+  // settingSources. Useful for verifying that the bind-mount of ~/.claude is
+  // present and that plugin-provided skills are visible. Requires the same
+  // bearer token as the OpenAI-shaped endpoints. The body is a filesystem
+  // snapshot — it does not call the SDK and may diverge from runtime state if
+  // the SDK ignores something we list.
+  app.get("/skills", async (req) => {
+    requireAuth(req);
+    const claudeDir = join(homedir(), ".claude");
+    return introspectClaudeMount({
+      claudeDir,
+      projectDir: opts.workspaceDir,
+      settingSources: CLAUDE_SETTING_SOURCES,
+    });
+  });
 
   app.get("/v1/models", async (req) => {
     requireAuth(req);
